@@ -19,6 +19,7 @@ package org.voltdb.sysprocs;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
@@ -28,24 +29,31 @@ import org.apache.calcite.sql.*;
 import org.apache.calcite.sql.ddl.SqlColumnDeclaration;
 import org.apache.calcite.sql.ddl.SqlColumnDeclarationWithExpression;
 import org.apache.calcite.sql.ddl.SqlCreateTable;
+import org.apache.calcite.sql.ddl.SqlKeyConstraint;
 import org.apache.calcite.sql.dialect.CalciteSqlDialect;
+import org.apache.calcite.sql.fun.SqlMonotonicBinaryOperator;
+import org.hsqldb_voltpatches.FunctionCustom;
+import org.hsqldb_voltpatches.FunctionSQL;
+import org.json_voltpatches.JSONException;
 import org.voltcore.utils.Pair;
 import org.voltdb.ClientInterface.ExplainMode;
 import org.voltdb.ParameterSet;
 import org.voltdb.VoltDB;
 import org.voltdb.VoltType;
-import org.voltdb.catalog.Column;
-import org.voltdb.catalog.Database;
-import org.voltdb.catalog.Table;
+import org.voltdb.catalog.*;
 import org.voltdb.catalog.org.voltdb.calciteadaptor.CatalogAdapter;
 import org.voltdb.client.ClientResponse;
 import org.voltdb.compiler.DDLCompiler;
 import org.voltdb.compilereport.TableAnnotation;
+import org.voltdb.expressions.*;
 import org.voltdb.newplanner.SqlBatch;
 import org.voltdb.newplanner.SqlTask;
 import org.voltdb.parser.SQLLexer;
 import org.voltdb.planner.PlanningErrorException;
 import org.voltdb.sysprocs.org.voltdb.calciteadapter.ColumnType;
+import org.voltdb.types.ConstraintType;
+import org.voltdb.types.ExpressionType;
+import org.voltdb.types.IndexType;
 import org.voltdb.utils.CatalogUtil;
 
 public class AdHoc extends AdHocNTBase {
@@ -170,7 +178,7 @@ public class AdHoc extends AdHocNTBase {
             throw new PlanningErrorException(String.format("%s column %s in table %s has unsupported length %s",
                     vt.toSQLString(), colName, VoltType.humanReadableSize(size)));
         } else if (vt == VoltType.STRING && size > VoltType.MAX_VALUE_LENGTH_IN_CHARACTERS) {
-            System.err.println(String.format(
+            System.err.println(String.format(       // in place of giving a warning
                     "The size of VARCHAR column %s in table %s greater than %d " +
                             "will be enforced as byte counts rather than UTF8 character counts. " +
                             "To eliminate this warning, specify \"VARCHAR(%s BYTES)\"",
@@ -193,8 +201,23 @@ public class AdHoc extends AdHocNTBase {
         return Pair.of(size, inBytes);
     }
 
+    // Allow only NOW function w/o parenthesis on TIMESTAMP column
+    private static String defaultFunctionValue(VoltType vt, String funName, String colName) {
+        if (! funName.equals("NOW")) {
+            throw new PlanningErrorException(String.format(
+                    "Function %s not allowed for DEFAULT value of column declaration",
+                    funName));
+        } else if (vt != VoltType.TIMESTAMP) {
+            throw new PlanningErrorException(String.format(
+                    "Function %s not allowed for DEFAULT value of column \"%s\" of %s type",
+                    funName, colName, vt.getName()));
+        } else {
+            return "CURRENT_TIMESTAMP:43";
+        }
+    }
+
     private static int addColumn(SqlColumnDeclarationWithExpression col, Table t, String tableName,
-                                 AtomicInteger index, Map<Integer, VoltType> columnTypes) {
+                                 AtomicInteger index, Map<Integer, VoltType> columnTypes, Map<String, Index> indexes) {
         final List<SqlNode> nameAndType = col.getOperandList();
         final String colName = nameAndType.get(0).toString();
         final Column column = t.getColumns().add(colName);
@@ -207,7 +230,8 @@ public class AdHoc extends AdHocNTBase {
         column.setType(vt.getValue());
         column.setNullable(type.getNullable());
         // Validate user-supplied size (SqlDataTypeSpec.precision)
-        boolean inBytes = col.getDataType().getInBytes();
+        final SqlDataTypeSpec dspec = col.getDataType();
+        boolean inBytes = dspec.getInBytes();
         if (vt.isVariableLength()) {     // user did not specify a size. Set to default value
             final Pair<Integer, Boolean> r = validateVarLenColumn(vt, tableName, colName, colSize, inBytes);
             colSize = r.getFirst();
@@ -228,15 +252,255 @@ public class AdHoc extends AdHocNTBase {
         final SqlNode expr = col.getExpression();
         if (expr != null) {
             column.setDefaulttype(vt.getValue());
-            column.setDefaultvalue(expr.toString());
+            if (expr instanceof SqlBasicCall) {
+                column.setDefaultvalue(defaultFunctionValue(vt, ((SqlBasicCall) expr).getOperator().getName(), colName));
+            } else if (expr instanceof SqlIdentifier) {
+                column.setDefaultvalue(defaultFunctionValue(vt, ((SqlIdentifier) expr).getSimple(), colName));
+            } else if (expr.getKind() == SqlKind.LITERAL) {
+                column.setDefaultvalue(expr.toString());
+            } else {
+                throw new PlanningErrorException(String.format(
+                        "Unsupported default expression for column \"%s\": \"%s\"", colName, expr.toString()));
+            }
         } else {
             column.setDefaultvalue(null);
+        }
+        if (dspec.getIsUnique() || dspec.getIsPKey()) {
+            final List<Column> cols = Collections.singletonList(column);
+            final SqlKind dtype = dspec.getIsPKey() ? SqlKind.PRIMARY_KEY : SqlKind.UNIQUE;
+            final String indexName = genIndexName(dtype, tableName, cols, false);
+            indexes.put(indexName, genIndex(dtype, t, indexName, vt == VoltType.GEOGRAPHY, cols, new ArrayList<>()));
         }
         return rowSizeDelta;
     }
 
+    private static void validatePKeyColumnType(String pkeyName, Column col) {
+        final VoltType vt = VoltType.get((byte) col.getType());
+        if (! vt.isIndexable()) {
+            throw new PlanningErrorException(String.format("Cannot create index \"%s\" because %s values " +
+                            "are not currently supported as index keys: \"%s\"",
+                    pkeyName, vt.getName(), col.getName()));
+        } else if (! vt.isUniqueIndexable()) {
+            throw new PlanningErrorException(String.format("Cannot create index \"%s\" because %s values " +
+                            "are not currently supported as unique index keys: \"%s\"",
+                    pkeyName, vt.getName(), col.getName()));
+        }
+    }
+
+    private static void validateIndexColumnType(String indexName, AbstractExpression e) {
+        StringBuffer sb = new StringBuffer();
+        if (! e.isValueTypeIndexable(sb)) {
+            throw new PlanningErrorException(String.format(
+                    "Cannot create index \"%s\" because it contains %s, which is not supported.",
+                    indexName, sb));
+        } else if (! e.isValueTypeUniqueIndexable(sb)) {
+            throw new PlanningErrorException(String.format(
+                    "Cannot create unique index \"%s\" because it contains %s, which is not supported",
+                    indexName, sb));
+        }
+    }
+
+    private static void validateGeogPKey(String pkeyName, List<Column> cols) {
+        if (cols.size() > 1) {
+            cols.stream()
+                    .filter(column -> column.getType() == VoltType.GEOGRAPHY.getValue()).findFirst()
+                    .ifPresent(column -> {
+                        throw new PlanningErrorException(String.format(
+                                "Cannot create index %s because %s values must be the only component of an index key: \"%s\"",
+                                pkeyName, VoltType.GEOGRAPHY.getName(), column.getName()));
+                    });
+        }
+    }
+
+    private static void validateGeogIndex(String indexName, List<AbstractExpression> exprs) {
+        exprs.stream()
+                .filter(expr -> expr.getValueType() == VoltType.GEOGRAPHY)
+                .findFirst()
+                .ifPresent(expr -> {
+                    if (exprs.size() > 1) {
+                        throw new PlanningErrorException(String.format(
+                                "Cannot create index \"%s\" because %s values must be the only component of an index key.",
+                                indexName, expr.getValueType().getName()));
+                    } else if (! (expr instanceof TupleValueExpression)) {
+                        throw new PlanningErrorException(String.format(
+                                "Cannot create index \"%s\" because %s expressions must be simple value expressions.",
+                                indexName, expr.getValueType().getName()));
+                    }
+                });
+    }
+
+    private static List<Integer> colIndicesOfIndex(Index index) {
+        final Iterable<ColumnRef> iterCref = () -> index.getColumns().iterator();
+        return StreamSupport
+                .stream(iterCref.spliterator(), false)
+                .mapToInt(cref -> cref.getColumn().getIndex())
+                .boxed()
+                .collect(Collectors.toList());
+    }
+
+    private static String genIndexName(SqlKind type, String tableName, List<Column> cols, boolean hasExpression) {
+        final String prefix = type == SqlKind.PRIMARY_KEY ? "VOLTDB_AUTOGEN_IDX_PK" : "SYS_IDX";
+        final String s =
+                cols.stream().map(Column::getName).reduce(
+                        String.format("%s_%s", prefix, tableName),
+                        (acc, colName) -> acc + "_" + colName),
+                suffix;
+        if (hasExpression) {
+            suffix = String.format("_%d", ThreadLocalRandom.current().nextInt(1_000,10_000));
+        } else {
+            suffix = "";
+        }
+        return s + suffix;
+    }
+
+    private static Index genIndex(SqlKind type, Table t, String indexName, boolean hasGeog,
+                                  List<Column> indexCols, List<AbstractExpression> exprs) {
+        final Index pkIndex = t.getIndexes().add(indexName);
+        pkIndex.setIssafewithnonemptysources(false);    // TODO
+        if (hasGeog) {
+            pkIndex.setCountable(false);
+            pkIndex.setType(IndexType.COVERING_CELL_INDEX.getValue());
+        } else {
+            pkIndex.setCountable(true);
+            pkIndex.setType(IndexType.BALANCED_TREE.getValue());
+        }
+        pkIndex.setUnique(true);
+        pkIndex.setAssumeunique(false);
+        final Constraint cons = t.getConstraints().add(indexName);
+        cons.setIndex(pkIndex);
+        cons.setType((type == SqlKind.PRIMARY_KEY ? ConstraintType.PRIMARY_KEY : ConstraintType.UNIQUE).getValue());
+        AtomicInteger i = new AtomicInteger(0);
+        indexCols.forEach(column -> {
+            final ColumnRef cref = pkIndex.getColumns().add(column.getName());
+            cref.setColumn(column);
+            cref.setIndex(i.getAndIncrement());
+        });
+        if (! exprs.isEmpty()) {
+            try {
+                pkIndex.setExpressionsjson(DDLCompiler.convertToJSONArray(exprs));
+            } catch (JSONException e) {
+                throw new PlanningErrorException(String.format(
+                        "Unexpected error serializing non-column expressions for index '%s' on type '%s': %s",
+                        indexName, t.getTypeName(), e.toString()));
+            }
+        }
+        return pkIndex;
+    }
+
+    // NOTE/TODO: we get function ID from HSql, which we aim to get rid of.
+    private static int getSqlFunId(String funName) {
+        int funId = FunctionSQL.regularFuncMap.get(funName, -1);
+        if (funId < 0) {
+            funId = FunctionCustom.getFunctionId(funName);
+        }
+        return funId;
+    }
+
+    private static TupleValueExpression genIndexFromExpr(SqlIdentifier id, Table t) {
+        final String colName = id.toString();
+        assert(t.getColumns().get(colName) != null);
+        return new TupleValueExpression(t.getTypeName(), colName, t.getColumns().get(colName).getIndex());
+    }
+
+    // Generate index from an expression
+    private static AbstractExpression genIndexFromExpr(SqlBasicCall call, Table t) {
+        final SqlOperator operator = call.getOperator();
+        final AbstractExpression result;
+        if (operator instanceof SqlFunction) {
+            final SqlFunction calciteFunc = (SqlFunction) operator;
+            final FunctionExpression expr = new FunctionExpression();
+            final String funName = operator.getName();
+            final int funId = getSqlFunId(funName);
+            expr.setAttributes(funName, null, funId);
+            expr.setArgs(call.getOperandList().stream().map(node -> {
+                if (node instanceof SqlBasicCall) {
+                    return genIndexFromExpr((SqlBasicCall) node, t);
+                } else if (node instanceof SqlIdentifier){
+                    return genIndexFromExpr((SqlIdentifier) node, t);
+                } else {
+                    throw new PlanningErrorException(String.format("Error parsing the function for index: %s",
+                            node.toString()));
+                }
+            }).collect(Collectors.toList()));
+            final VoltType returnType;
+            switch (calciteFunc.getFunctionType()) {
+                case STRING:
+                    returnType = VoltType.STRING;
+                    break;
+                case NUMERIC:       // VoltDB does not have NUMERIC(len, prec), so this type promotion is safe.
+                    returnType = VoltType.FLOAT;
+                    break;
+                case TIMEDATE:
+                    returnType = VoltType.TIMESTAMP;
+                    break;
+                default:
+                    throw new PlanningErrorException(String.format("Unsupported function return type %s for function %s",
+                            calciteFunc.getFunctionType().toString(), funName));
+            }
+            expr.setValueType(returnType);
+            result = expr;
+        } else {
+            List<AbstractExpression> exprs = call.getOperandList().stream().map(node -> {
+                if (node instanceof SqlIdentifier) {
+                    return genIndexFromExpr((SqlIdentifier) node, t);
+                } else if (node instanceof SqlNumericLiteral) {
+                    final SqlNumericLiteral literal = (SqlNumericLiteral) node;
+                    final ConstantValueExpression e = new ConstantValueExpression();
+                    e.setValue(literal.toValue());
+                    e.setValueType(literal.isInteger() ? VoltType.BIGINT : VoltType.FLOAT);
+                    return e;
+                } else {
+                    assert (node instanceof SqlBasicCall);
+                    return genIndexFromExpr((SqlBasicCall) node, t);
+                }
+            }).collect(Collectors.toList());
+            final ExpressionType op;
+            if (operator instanceof SqlMonotonicBinaryOperator) {
+                switch (call.getKind()) {
+                    case PLUS:
+                        op = ExpressionType.OPERATOR_PLUS;
+                        break;
+                    case MINUS:
+                        op = ExpressionType.OPERATOR_MINUS;
+                        break;
+                    case TIMES:
+                        op = ExpressionType.OPERATOR_MULTIPLY;
+                        break;
+                    case DIVIDE:
+                        op = ExpressionType.OPERATOR_DIVIDE;
+                        break;
+                    case MOD:
+                        op = ExpressionType.OPERATOR_MOD;
+                        break;
+                    default:
+                        throw new PlanningErrorException(String.format("Found unexpected binary expression operator \"%s\" in %s",
+                                call.getOperator().getName(), call.toString()));
+                }
+                result = new OperatorExpression(op, exprs.get(0), exprs.get(1));
+            } else if (operator instanceof SqlPrefixOperator) {
+                switch (call.getKind()) {
+                    case MINUS_PREFIX:
+                        result = new OperatorExpression(ExpressionType.OPERATOR_UNARY_MINUS, exprs.get(0), null);
+                        break;
+                    case PLUS_PREFIX:       // swallow unary plus
+                        result = exprs.get(0);
+                        break;
+                    default:
+                        throw new PlanningErrorException(String.format("Found unexpected unary expression operator \"%s\" in %s",
+                                call.getOperator().getName(), call.toString()));
+                }
+            } else {
+                throw new PlanningErrorException(String.format("Found Unknown expression operator \"%s\" in %s",
+                        call.getOperator().getName(), call.toString()));
+            }
+        }
+        result.resolveForTable(t);
+        result.finalizeValueTypes();
+        return result;
+    }
+
     public static SchemaPlus addTable(SqlNode node, Database db) {
-        if (node.getKind() != SqlKind.CREATE_TABLE) {           // for now, only patially support CREATE TABLE stmt
+        if (node.getKind() != SqlKind.CREATE_TABLE) {           // for now, only partially support CREATE TABLE stmt
             return CatalogAdapter.schemaPlusFromDatabase(db);
         }
         final List<SqlNode> nameAndColListAndQuery = ((SqlCreateTable) node).getOperandList();
@@ -257,19 +521,58 @@ public class AdHoc extends AdHocNTBase {
         int rowSize = 0;
         final AtomicInteger index = new AtomicInteger(0);
         final SortedMap<Integer, VoltType> columnTypes = new TreeMap<>();
+        final Map<String, Index> indexMap = new HashMap<>();
 
-        for (SqlNode c : nodeTableList) {
-            switch (c.getKind()) {
-                case PRIMARY_KEY:        // For now, skip constraint entries.
-                    continue;
+        for (SqlNode col : nodeTableList) {
+            switch (col.getKind()) {
+                case PRIMARY_KEY:        // PKey and Unique are treated almost in the same way, except naming and table constraint type.
+                case UNIQUE:
+                    final List<SqlNode> nodes = ((SqlKeyConstraint) col).getOperandList();
+                    assert(nodes.size() == 2 && nodes.get(0) == null);
+                    final List<SqlNode> sqls = ((SqlNodeList) nodes.get(1)).getList(),
+                            exprs = sqls.stream().filter(n -> n instanceof SqlBasicCall).collect(Collectors.toList()),
+                            cols = sqls.stream().filter(n -> ! (n instanceof SqlBasicCall) && ! (n instanceof SqlLiteral))   // ignore constant
+                                    .collect(Collectors.toList());
+                    final List<AbstractExpression> voltExprs = exprs.stream()
+                            .map(call -> genIndexFromExpr((SqlBasicCall) call, t))
+                            .collect(Collectors.toList());
+                    final List<Column> pkCols = cols.stream()
+                            .map(c -> t.getColumns().get(c.toString()))
+                            .collect(Collectors.toList());
+                    final String indexName = genIndexName(col.getKind(), tableName, pkCols, ! voltExprs.isEmpty());
+                    pkCols.forEach(column -> validatePKeyColumnType(indexName, column));
+                    validateGeogPKey(indexName, pkCols);
+                    voltExprs.forEach(e -> validateIndexColumnType(indexName, e));
+                    final StringBuffer sb = new StringBuffer(String.format("index %s", indexName));
+                    if (! AbstractExpression.validateExprsForIndexesAndMVs(voltExprs, sb, false)) {
+                        throw new PlanningErrorException(sb.toString());
+                    }
+                    validateGeogIndex(indexName, voltExprs);
+                    final boolean hasGeogType =
+                            pkCols.stream().anyMatch(column -> column.getType() == VoltType.GEOGRAPHY.getValue()) ||
+                                    voltExprs.stream().anyMatch(expr -> expr.getValueType() == VoltType.GEOGRAPHY);
+                    final Index indexConstraint = genIndex(col.getKind(), t, indexName, hasGeogType, pkCols, voltExprs);
+                    if (indexMap.values().stream()       // find dup index
+                            .noneMatch(
+                                    other -> other.getType() == indexConstraint.getType() &&
+                                            other.getCountable() == indexConstraint.getCountable() &&
+                                            other.getUnique() == indexConstraint.getUnique() &&
+                                            other.getAssumeunique() == indexConstraint.getAssumeunique() &&
+                                            other.getColumns().size() == indexConstraint.getColumns().size() && // skip expression comparison
+                                            colIndicesOfIndex(other).equals(colIndicesOfIndex(indexConstraint)))) {
+                        indexMap.put(indexName, indexConstraint);
+                    }
+                    break;
                 case COLUMN_DECL:
-                    rowSize += addColumn(new SqlColumnDeclarationWithExpression((SqlColumnDeclaration) c),
-                            t, tableName, index, columnTypes);
+                    rowSize += addColumn(new SqlColumnDeclarationWithExpression((SqlColumnDeclaration) col),
+                            t, tableName, index, columnTypes, indexMap);
                     if (rowSize > DDLCompiler.MAX_ROW_SIZE) {       // fails when the accumulative row size exeeds limit
                         throw new PlanningErrorException(String.format(
                                 "Error: table %s has a maximum row size of %s but the maximum supported size is %s",
                                 tableName, VoltType.humanReadableSize(rowSize), VoltType.humanReadableSize(DDLCompiler.MAX_ROW_SIZE)));
                     }
+                    break;
+                default:
             }
         }
         t.setSignature(CatalogUtil.getSignatureForTable(tableName, columnTypes));

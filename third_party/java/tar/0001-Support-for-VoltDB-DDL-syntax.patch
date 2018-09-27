@@ -1,0 +1,260 @@
+From afce8f817441e91352a5bb8d77000fcbe99e9d2a Mon Sep 17 00:00:00 2001
+From: Lukai Liu <lliu@voltdb.com>
+Date: Mon, 1 Oct 2018 15:37:58 -0400
+Subject: [PATCH] Support for VoltDB DDL syntax
+
+1. CREATE TABLE(i VARCHAR(32 BYTES)); -- "BYTES" keyword
+2. CREATE TABLE(i INT PRIMARY KEY, j INT UNIQUE); -- Declaration of PKey / Unique with column declaration.
+3. CREATE TABLE(..., UNIQUE (i + j)); -- UNIQUE expression of columns
+
+4. CREATE TABLE(i TIMESTAMP DEFAULT NOW(), ...); or
+   CREATE TABLE(i TIMESTAMP DEFAULT NOW, ...) -- Allow function expression to appear as default value
+---
+ core/src/main/codegen/templates/Parser.jj     | 69 ++++++++++++++++++-
+ .../apache/calcite/sql/SqlDataTypeSpec.java   | 40 ++++++++++-
+ .../calcite/sql/fun/SqlDefaultOperator.java   |  2 +-
+ .../src/main/codegen/includes/parserImpls.ftl |  2 +-
+ site/_docs/reference.md                       |  1 +
+ 5 files changed, 109 insertions(+), 5 deletions(-)
+
+diff --git a/core/src/main/codegen/templates/Parser.jj b/core/src/main/codegen/templates/Parser.jj
+index be05d9c2e..4d111a99a 100644
+--- a/core/src/main/codegen/templates/Parser.jj
++++ b/core/src/main/codegen/templates/Parser.jj
+@@ -4230,6 +4230,30 @@ void SimpleIdentifierCommaList(List<SqlNode> list) :
+     )*
+ }
+ 
++/**
++ * Parses a comma-separate list of simple identifiers, or non-query expressions.
++ */
++void SimpleIdentifierOrExpressionCommaList(List<SqlNode> list) :
++{
++   SqlIdentifier id;
++   SqlNode expr;
++}
++{
++    (
++        id = SimpleIdentifier() {list.add(id);}
++        |
++        expr = Expression(ExprContext.ACCEPT_NON_QUERY) {list.add(expr);}
++    )
++    (
++        <COMMA>
++        (
++            id = SimpleIdentifier() {list.add(id);}
++            |
++            expr = Expression(ExprContext.ACCEPT_NON_QUERY) {list.add(expr);}
++        )
++    )*
++}
++
+ /**
+   * List of simple identifiers in parentheses. The position extends from the
+   * open parenthesis to the close parenthesis.
+@@ -4247,6 +4271,23 @@ SqlNodeList ParenthesizedSimpleIdentifierList() :
+     }
+ }
+ 
++/**
++  * List of simple identifiers or expressions in parentheses. The position extends from the
++  * open parenthesis to the close parenthesis.
++  */
++SqlNodeList ParenthesizedSimpleIdentifierOrExpressionList() :
++{
++    final Span s;
++    final List<SqlNode> list = new ArrayList<SqlNode>();
++}
++{
++    <LPAREN> { s = span(); }
++    SimpleIdentifierOrExpressionCommaList(list)
++    <RPAREN> {
++        return new SqlNodeList(list, s.end(this));
++    }
++}
++
+ <#if parser.includeCompoundIdentifier >
+ /**
+  * Parses a compound identifier.
+@@ -4387,6 +4428,9 @@ SqlDataTypeSpec DataType() :
+     SqlIdentifier collectionTypeName = null;
+     int scale = -1;
+     int precision = -1;
++    boolean inBytes = false;
++    boolean isUnique = false;
++    boolean isPKey = false;
+     String charSetName = null;
+     final Span s;
+ }
+@@ -4401,12 +4445,30 @@ SqlDataTypeSpec DataType() :
+             <COMMA>
+             scale = UnsignedIntLiteral()
+         ]
++        [
++            <BYTES>
++            {
++               inBytes = true;
++            }
++        ]
+         <RPAREN>
+     ]
+     [
+         <CHARACTER> <SET>
+         charSetName = Identifier()
+     ]
++    [
++       <PRIMARY> <KEY>
++       {
++          isPKey = true;
++       }
++    ]
++    [
++       <UNIQUE>
++       {
++          isUnique = true;
++       }
++    ]
+     [
+         collectionTypeName = CollectionsTypeName()
+     ]
+@@ -4426,7 +4488,10 @@ SqlDataTypeSpec DataType() :
+             scale,
+             charSetName,
+             null,
+-            s.end(this));
++            s.end(this))
++        .setInBytes(inBytes)
++        .setIsUnique(isUnique)
++        .setIsPKey(isPKey);
+     }
+ }
+ 
+@@ -5503,6 +5568,7 @@ SqlPostfixOperator PostfixRowOperator() :
+ |   < BOTH: "BOTH" >
+ |   < BREADTH: "BREADTH" >
+ |   < BY: "BY" >
++|   < BYTES: "BYTES" >
+ |   < C: "C" >
+ |   < CALL: "CALL" >
+ |   < CALLED: "CALLED" >
+@@ -6151,6 +6217,7 @@ String CommonNonReservedKeyWord() :
+     |   <BEFORE>
+     |   <BERNOULLI>
+     |   <BREADTH>
++    |   <BYTES>
+     |   <C>
+     |   <CASCADE>
+     |   <CATALOG>
+diff --git a/core/src/main/java/org/apache/calcite/sql/SqlDataTypeSpec.java b/core/src/main/java/org/apache/calcite/sql/SqlDataTypeSpec.java
+index a6238a302..0289db247 100644
+--- a/core/src/main/java/org/apache/calcite/sql/SqlDataTypeSpec.java
++++ b/core/src/main/java/org/apache/calcite/sql/SqlDataTypeSpec.java
+@@ -60,6 +60,9 @@
+   private final SqlIdentifier baseTypeName;
+   private final int scale;
+   private final int precision;
++  private boolean inBytes = false;
++  private boolean isUnique = false;
++  private boolean isPKey = false;
+   private final String charSetName;
+   private final TimeZone timeZone;
+ 
+@@ -181,6 +184,33 @@ public Boolean getNullable() {
+     return nullable;
+   }
+ 
++  public boolean getInBytes() {
++    return inBytes;
++  }
++
++  public SqlDataTypeSpec setInBytes(boolean inBytes) {
++    this.inBytes = inBytes;
++    return this;
++  }
++
++  public boolean getIsUnique() {
++    return isUnique;
++  }
++
++  public SqlDataTypeSpec setIsUnique(boolean isUnique) {
++    this.isUnique = isUnique;
++    return this;
++  }
++
++  public boolean getIsPKey() {
++    return isPKey;
++  }
++
++  public SqlDataTypeSpec setIsPKey(boolean isPKey) {
++    this.isPKey = isPKey;
++    return this;
++  }
++
+   /** Returns a copy of this data type specification with a given
+    * nullability. */
+   public SqlDataTypeSpec withNullable(Boolean nullable) {
+@@ -188,7 +218,10 @@ public SqlDataTypeSpec withNullable(Boolean nullable) {
+       return this;
+     }
+     return new SqlDataTypeSpec(collectionsTypeName, typeName, precision, scale,
+-        charSetName, timeZone, nullable, getParserPosition());
++        charSetName, timeZone, nullable, getParserPosition())
++       .setInBytes(inBytes)
++       .setIsUnique(isUnique)
++       .setIsPKey(isPKey);
+   }
+ 
+   /**
+@@ -204,7 +237,10 @@ public SqlDataTypeSpec getComponentTypeSpec() {
+         scale,
+         charSetName,
+         timeZone,
+-        getParserPosition());
++        getParserPosition())
++       .setInBytes(inBytes)
++       .setIsUnique(isUnique)
++       .setIsPKey(isPKey);
+   }
+ 
+   public void unparse(
+diff --git a/core/src/main/java/org/apache/calcite/sql/fun/SqlDefaultOperator.java b/core/src/main/java/org/apache/calcite/sql/fun/SqlDefaultOperator.java
+index 44decb32e..924f61248 100644
+--- a/core/src/main/java/org/apache/calcite/sql/fun/SqlDefaultOperator.java
++++ b/core/src/main/java/org/apache/calcite/sql/fun/SqlDefaultOperator.java
+@@ -36,7 +36,7 @@
+   SqlDefaultOperator() {
+     super("DEFAULT", SqlKind.DEFAULT, 100, true,
+         ReturnTypes.explicit(SqlTypeName.ANY), InferTypes.RETURN_TYPE,
+-        OperandTypes.NILADIC);
++        OperandTypes.VARIADIC);
+   }
+ 
+   @Override public void unparse(SqlWriter writer, SqlCall call, int leftPrec,
+diff --git a/server/src/main/codegen/includes/parserImpls.ftl b/server/src/main/codegen/includes/parserImpls.ftl
+index 82210a01e..c6360081e 100644
+--- a/server/src/main/codegen/includes/parserImpls.ftl
++++ b/server/src/main/codegen/includes/parserImpls.ftl
+@@ -180,7 +180,7 @@ void TableElement(List<SqlNode> list) :
+         }
+     |
+         <UNIQUE> { s.add(this); }
+-        columnList = ParenthesizedSimpleIdentifierList() {
++        columnList = ParenthesizedQueryOrCommaList(ExprContext.ACCEPT_NON_QUERY) {
+             list.add(SqlDdlNodes.unique(s.end(columnList), name, columnList));
+         }
+     |
+diff --git a/site/_docs/reference.md b/site/_docs/reference.md
+index acf8f29be..a4ae949d2 100644
+--- a/site/_docs/reference.md
++++ b/site/_docs/reference.md
+@@ -341,6 +341,7 @@ BERNOULLI,
+ **BOTH**,
+ BREADTH,
+ **BY**,
++BYTES,
+ C,
+ **CALL**,
+ **CALLED**,
+-- 
+2.17.1
+
