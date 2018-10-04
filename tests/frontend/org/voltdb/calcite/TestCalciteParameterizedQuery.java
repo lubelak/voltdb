@@ -33,6 +33,7 @@ import org.voltcore.messaging.HostMessenger;
 import org.voltdb.CatalogContext;
 import org.voltdb.catalog.Catalog;
 import org.voltdb.compiler.*;
+import org.voltdb.newplanner.ParameterizeVisitor;
 import org.voltdb.parser.ParserFactory;
 import org.voltdb.planner.ParameterizationInfo;
 import org.voltdb.planner.QueryPlanner;
@@ -96,11 +97,14 @@ public class TestCalciteParameterizedQuery {
 
     @Test
     public void testParameterizedQuery() throws SqlParseException {
-        String sql = "select * from T where id = 7 and name = 'lion' and cnt = 566";
+        String sql = "select * from T where id = 7 and name = ? and cnt = ?";
         SqlParser parser = ParserFactory.create(sql);
         SqlNode sqlNode = parser.parseStmt();
         System.out.println(sqlNode.toString());
         assertEquals(1,1);
+
+        ParameterizeVisitor visitor = new ParameterizeVisitor();
+        sqlNode.accept(visitor);
 
         String parsedToken;
 
