@@ -1,0 +1,57 @@
+From 8061dce0c49c3c3e37416fcf5b86505d0dc8d4ea Mon Sep 17 00:00:00 2001
+From: Chao Zhou <czhou@voltdb.com>
+Date: Thu, 4 Oct 2018 17:31:13 -0400
+Subject: [PATCH] add setOperand() to SqlOrderBy
+
+---
+ .../java/org/apache/calcite/sql/SqlOrderBy.java    | 27 ++++++++++++++++++----
+ 1 file changed, 23 insertions(+), 4 deletions(-)
+
+diff --git a/core/src/main/java/org/apache/calcite/sql/SqlOrderBy.java b/core/src/main/java/org/apache/calcite/sql/SqlOrderBy.java
+index 421b9e21d..36f673ac2 100644
+--- a/core/src/main/java/org/apache/calcite/sql/SqlOrderBy.java
++++ b/core/src/main/java/org/apache/calcite/sql/SqlOrderBy.java
+@@ -38,10 +38,10 @@
+     }
+   };
+ 
+-  public final SqlNode query;
+-  public final SqlNodeList orderList;
+-  public final SqlNode offset;
+-  public final SqlNode fetch;
++  public SqlNode query;
++  public SqlNodeList orderList;
++  public SqlNode offset;
++  public SqlNode fetch;
+ 
+   //~ Constructors -----------------------------------------------------------
+ 
+@@ -68,6 +68,25 @@ public SqlOperator getOperator() {
+     return ImmutableNullableList.of(query, orderList, offset, fetch);
+   }
+ 
++  @Override public void setOperand(int i, SqlNode operand) {
++    switch (i) {
++    case 0:
++      query = operand;
++      break;
++    case 1:
++      orderList = (SqlNodeList) operand;
++      break;
++    case 2:
++      offset = operand;
++      break;
++    case 3:
++      fetch = operand;
++      break;
++    default:
++      throw new AssertionError(i);
++    }
++  }
++
+   /** Definition of {@code ORDER BY} operator. */
+   private static class Operator extends SqlSpecialOperator {
+     private Operator() {
+-- 
+2.15.2 (Apple Git-101.1)
+
