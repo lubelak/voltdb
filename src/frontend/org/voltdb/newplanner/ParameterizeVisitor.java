@@ -17,14 +17,12 @@
 
 package org.voltdb.newplanner;
 
-import org.apache.calcite.sql.SqlCall;
-import org.apache.calcite.sql.SqlDynamicParam;
-import org.apache.calcite.sql.SqlLiteral;
-import org.apache.calcite.sql.SqlNode;
+import org.apache.calcite.sql.*;
 import org.apache.calcite.sql.util.SqlBasicVisitor;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 /**
  * Visitor that can replace all the {@link SqlLiteral} to {@link SqlDynamicParam} inplace.
@@ -34,9 +32,37 @@ import java.util.List;
  * @since 8.4
  */
 public class ParameterizeVisitor extends SqlBasicVisitor<SqlNode> {
-
     private final List<SqlLiteral> sqlLiteralList = new ArrayList<>();
     private int dynamicParamIndex = 0;
+
+    private void setNodeOperand(SqlCall sqlCall, int i, SqlNode operand) {
+//        try {
+//            sqlCall.setOperand(i, operand);
+//        } catch (UnsupportedOperationException e){
+//            if (sqlCall instanceof SqlOrderBy) {
+//                switch (i) {
+//                    case 0:
+//                        ((SqlOrderBy) sqlCall).query = Objects.requireNonNull((SqlNodeList) operand);
+//                        break;
+//                    case 1:
+//                        selectList = (SqlNodeList) operand;
+//                        break;
+//                    case 2:
+//                        from = operand;
+//                        break;
+//                    case 3:
+//                        where = operand;
+//                        break;
+//                    default:
+//                        throw new AssertionError(i);
+//                }
+//            }
+//        }
+    }
+
+    public List<SqlLiteral> getSqlLiteralList() {
+        return sqlLiteralList;
+    }
 
     public SqlNode visit(SqlLiteral literal) {
         sqlLiteralList.add(literal);

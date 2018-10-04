@@ -26,6 +26,7 @@ package org.voltdb.calcite;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.parser.SqlParseException;
 import org.apache.calcite.sql.parser.SqlParser;
+import org.apache.calcite.util.Litmus;
 import org.hsqldb_voltpatches.HSQLInterface;
 import org.junit.Before;
 import org.junit.Test;
@@ -96,54 +97,67 @@ public class TestCalciteParameterizedQuery {
     }
 
     @Test
-    public void testParameterizedQuery() throws SqlParseException {
-        String sql = "select * from T where id = 7 and name = ? and cnt = ?";
+    public void testParameterizedVisitor() throws SqlParseException {
+        String sql = "select * from T where id = 7 and name = 'aaa' and cnt = 566 LIMIT 2 OFFSET 3";
         SqlParser parser = ParserFactory.create(sql);
         SqlNode sqlNode = parser.parseStmt();
-        System.out.println(sqlNode.toString());
-        assertEquals(1,1);
-
         ParameterizeVisitor visitor = new ParameterizeVisitor();
         sqlNode.accept(visitor);
 
-        String parsedToken;
+        sql = "select * from T where id = ? and name = ? and cnt = ? LIMIT ? OFFSET ?";
+        parser = ParserFactory.create(sql);
+        assertTrue(SqlNode.equalDeep(parser.parseStmt(), sqlNode, Litmus.THROW));
+    }
 
-        m_planner = new QueryPlanner(
-                sql,
-                "PlannerTool",
-                "PlannerToolProc",
-                m_context.database,
-                StatementPartitioning.inferPartitioning(),
-                m_hsql,
-                new DatabaseEstimates(),
-                !VoltCompiler.DEBUG_MODE,
-                new TrivialCostModel(),
-                null,
-                null,
-                DeterminismMode.FASTER,
-                false);
-
-        m_planner.parse();
-        parsedToken = m_planner.parameterize();
-
-        m_planner = new QueryPlanner(
-                sql,
-                "PlannerTool",
-                "PlannerToolProc",
-                m_context.database,
-                StatementPartitioning.inferPartitioning(),
-                m_hsql,
-                new DatabaseEstimates(),
-                !VoltCompiler.DEBUG_MODE,
-                new TrivialCostModel(),
-                null,
-                null,
-                DeterminismMode.FASTER,
-                false);
-        m_planner.parse();
-        assertEquals(m_planner.parameterize(), parsedToken);
-        assertFalse(parsedToken.equals(m_planner.getXmlSQL().toMinString()));
-
-        int a=111;
+    @Test
+    public void testParameterizedQuery() throws SqlParseException {
+//        String sql = "select * from T where id = 7 and name = 'aaa' and cnt = 566 LIMIT 2 OFFSET 3";
+//        SqlParser parser = ParserFactory.create(sql);
+//        SqlNode sqlNode = parser.parseStmt();
+//        System.out.println(sqlNode.toString());
+//        assertEquals(1,1);
+//
+//        ParameterizeVisitor visitor = new ParameterizeVisitor();
+//        sqlNode.accept(visitor);
+//
+//        String parsedToken;
+//
+//        m_planner = new QueryPlanner(
+//                sql,
+//                "PlannerTool",
+//                "PlannerToolProc",
+//                m_context.database,
+//                StatementPartitioning.inferPartitioning(),
+//                m_hsql,
+//                new DatabaseEstimates(),
+//                !VoltCompiler.DEBUG_MODE,
+//                new TrivialCostModel(),
+//                null,
+//                null,
+//                DeterminismMode.FASTER,
+//                false);
+//
+//        m_planner.parse();
+//        parsedToken = m_planner.parameterize();
+//
+//        m_planner = new QueryPlanner(
+//                sql,
+//                "PlannerTool",
+//                "PlannerToolProc",
+//                m_context.database,
+//                StatementPartitioning.inferPartitioning(),
+//                m_hsql,
+//                new DatabaseEstimates(),
+//                !VoltCompiler.DEBUG_MODE,
+//                new TrivialCostModel(),
+//                null,
+//                null,
+//                DeterminismMode.FASTER,
+//                false);
+//        m_planner.parse();
+//        assertEquals(m_planner.parameterize(), parsedToken);
+//        assertFalse(parsedToken.equals(m_planner.getXmlSQL().toMinString()));
+//
+//        int a=111;
     }
 }
