@@ -61,13 +61,12 @@ import static org.mockito.Mockito.mock;
 
 public class TestCalciteParameterizedQuery {
     private CatalogContext m_context;
-    private QueryPlanner m_planner;
     private HSQLInterface m_hsql;
 
     @Before
     public void setUp() throws Exception {
         VoltProjectBuilder builder = new VoltProjectBuilder();
-        builder.addLiteralSchema("create table t(id bigint not null, name varchar(100), cnt int, primary key(id));");
+        builder.addLiteralSchema("create table t(id int not null, name varchar(100), cnt int, primary key(id));");
         builder.addPartitionInfo("t", "id");
 
         final File jar = new File("testcalciteParameterizedQuery.jar");
@@ -79,7 +78,7 @@ public class TestCalciteParameterizedQuery {
         Catalog c = new Catalog();
         c.execute(serializedCatalog);
         DbSettings settings = new DbSettings(ClusterSettings.create().asSupplier(), NodeSettings.create());
-        m_context = new CatalogContext(c, settings, 0, 0, bytes, null, new byte[] {}, mock(HostMessenger.class));
+        m_context = new CatalogContext(c, settings, 0, 0, bytes, null, new byte[]{}, mock(HostMessenger.class));
 
         m_hsql = HSQLInterface.loadHsqldb(ParameterizationInfo.getParamStateManager());
 
@@ -93,8 +92,7 @@ public class TestCalciteParameterizedQuery {
                 continue;
             try {
                 m_hsql.runDDLCommand(decoded_cmd);
-            }
-            catch (HSQLInterface.HSQLParseException e) {
+            } catch (HSQLInterface.HSQLParseException e) {
                 // need a good error message here
                 throw new RuntimeException("Error creating hsql: " + e.getMessage() + " in DDL statement: " + decoded_cmd);
             }
@@ -103,33 +101,28 @@ public class TestCalciteParameterizedQuery {
 
     @Test
     public void testParameterizedVisitor() throws SqlParseException {
-        String sql = "select * from T where id = 7 and name = 'Chao' and cnt = 566 LIMIT 2 OFFSET 3";
-        SqlParser parser = ParserFactory.create(sql);
-        SqlNode sqlNode = parser.parseStmt();
-        ParameterizeVisitor visitor = new ParameterizeVisitor();
-        sqlNode.accept(visitor);
-
-        sql = "select * from T where id = ? and name = ? and cnt = ? LIMIT ? OFFSET ?";
-        parser = ParserFactory.create(sql);
-
-        SqlNode sqlkkkk = parser.parseStmt();
-        assertTrue(SqlNode.equalDeep(sqlkkkk, sqlNode, Litmus.THROW));
-
-        String[] queries = {"select * from T where id = 7 and name = 'Chao' and cnt = 566 LIMIT 2 OFFSET 3",
+        String[] queries = {
+                "select * from T where id = 7 and name = 'Chao' and cnt = 566 LIMIT 2 OFFSET 3",
                 "select * from T where id = 7 and cnt < 566 and name = 'Chao'",
-                "INSERT INTO T VALUES (7, 'Chao', 566)"
+                "INSERT INTO T VALUES (7, 'Chao', 566)",
+                "SELECT * FROM T WHERE cnt IN (1, 3, 5)"
         };
 
-        String[] parameterizedQueries = {"select * from T where id = ? and name = ? and cnt = ? LIMIT ? OFFSET ?",
+        String[] parameterizedQueries = {
+                "select * from T where id = ? and name = ? and cnt = ? LIMIT ? OFFSET ?",
                 "select * from T where id = ? and cnt < ? and name = ?",
-                "INSERT INTO T VALUES (?, ?, ?)"
+                "INSERT INTO T VALUES (?, ?, ?)",
+                "SELECT * FROM T WHERE cnt IN (?, ?, ?)"
         };
 
-        List<Object>[] values= new List[]{Arrays.asList(BigDecimal.valueOf(7), new NlsString("Chao", null, null), BigDecimal.valueOf(566), BigDecimal.valueOf(2), BigDecimal.valueOf(3)),
+        List<Object>[] values = new List[]{
+                Arrays.asList(BigDecimal.valueOf(7), new NlsString("Chao", null, null), BigDecimal.valueOf(566), BigDecimal.valueOf(2), BigDecimal.valueOf(3)),
                 Arrays.asList(BigDecimal.valueOf(7), BigDecimal.valueOf(566), new NlsString("Chao", null, null)),
-                Arrays.asList(BigDecimal.valueOf(7), new NlsString("Chao", null, null), BigDecimal.valueOf(566))};
+                Arrays.asList(BigDecimal.valueOf(7), new NlsString("Chao", null, null), BigDecimal.valueOf(566)),
+                Arrays.asList(BigDecimal.valueOf(1), BigDecimal.valueOf(3), BigDecimal.valueOf(5))
+        };
 
-        for(int i=0; i<queries.length; i++){
+        for (int i = 0; i < queries.length; i++) {
             SqlParser actualParser = ParserFactory.create(queries[i]);
             SqlNode actualSqlNode = actualParser.parseStmt();
             ParameterizeVisitor actualVisitor = new ParameterizeVisitor();
@@ -145,60 +138,67 @@ public class TestCalciteParameterizedQuery {
 
     private void assertValuesEqual(List<Object> expectedValues, List<SqlLiteral> actualValues) {
         assertEquals(expectedValues.size(), actualValues.size());
-        for (int i=0; i<expectedValues.size(); i++){
+        for (int i = 0; i < expectedValues.size(); i++) {
             assertEquals(expectedValues.get(i), actualValues.get(i).getValue());
         }
     }
 
     @Test
     public void testParameterizedQuery() throws SqlParseException {
-//        String sql = "select * from T where id = 7 and name = 'aaa' and cnt = 566 LIMIT 2 OFFSET 3";
-//        SqlParser parser = ParserFactory.create(sql);
-//        SqlNode sqlNode = parser.parseStmt();
-//        System.out.println(sqlNode.toString());
-//        assertEquals(1,1);
-//
-//        ParameterizeVisitor visitor = new ParameterizeVisitor();
-//        sqlNode.accept(visitor);
-//
-//        String parsedToken;
-//
-//        m_planner = new QueryPlanner(
-//                sql,
-//                "PlannerTool",
-//                "PlannerToolProc",
-//                m_context.database,
-//                StatementPartitioning.inferPartitioning(),
-//                m_hsql,
-//                new DatabaseEstimates(),
-//                !VoltCompiler.DEBUG_MODE,
-//                new TrivialCostModel(),
-//                null,
-//                null,
-//                DeterminismMode.FASTER,
-//                false);
-//
-//        m_planner.parse();
-//        parsedToken = m_planner.parameterize();
-//
-//        m_planner = new QueryPlanner(
-//                sql,
-//                "PlannerTool",
-//                "PlannerToolProc",
-//                m_context.database,
-//                StatementPartitioning.inferPartitioning(),
-//                m_hsql,
-//                new DatabaseEstimates(),
-//                !VoltCompiler.DEBUG_MODE,
-//                new TrivialCostModel(),
-//                null,
-//                null,
-//                DeterminismMode.FASTER,
-//                false);
-//        m_planner.parse();
-//        assertEquals(m_planner.parameterize(), parsedToken);
-//        assertFalse(parsedToken.equals(m_planner.getXmlSQL().toMinString()));
-//
-//        int a=111;
+        String sql = "select * from T where id = 7 and name = 'aaa' and cnt = 566";
+        SqlParser parser = ParserFactory.create(sql);
+        SqlNode sqlNode = parser.parseStmt();
+
+        ParameterizeVisitor visitor = new ParameterizeVisitor();
+        sqlNode.accept(visitor);
+
+        QueryPlanner m_planner = new QueryPlanner(
+                sql,
+                "PlannerTool",
+                "PlannerToolProc",
+                m_context.database,
+                StatementPartitioning.inferPartitioning(),
+                m_hsql,
+                new DatabaseEstimates(),
+                !VoltCompiler.DEBUG_MODE,
+                new TrivialCostModel(),
+                null,
+                null,
+                DeterminismMode.FASTER,
+                false);
+
+        m_planner.parse();
+        String parsedToken = m_planner.parameterize();
+
+        sql = sqlNode.toSqlString(null).toString().replace("`", "");
+
+        m_planner = new QueryPlanner(
+                sql,
+                "PlannerTool",
+                "PlannerToolProc",
+                m_context.database,
+                StatementPartitioning.inferPartitioning(),
+                m_hsql,
+                new DatabaseEstimates(),
+                !VoltCompiler.DEBUG_MODE,
+                new TrivialCostModel(),
+                null,
+                null,
+                DeterminismMode.FASTER,
+                false);
+        m_planner.parse();
+
+        /*
+        TODO: In theory, the following assert should pass, but actually it won't pass due to:
+        1. the unparse() method not allows gives you a valid sql. We can avoid this via narrow the test case.
+        2. Even given by a standard&simple testcase say "select * from T where name = 'oh'" vs. "select * from T where name = ?"
+        it still have differences in the final xml. Cause:
+            a. The planner sometimes will infer a different datatype, for example Varchar will become String.
+            b. The planner will assign different id to the parameters.
+            c. The planner will generate an additional isplannergenerated: true tag after calling parameterize().
+
+        I am not sure I should fix this. To me the testParameterizedVisitor() is enough.
+         */
+//        assertEquals(parsedToken, m_planner.getXmlSQL().toMinString());
     }
 }
