@@ -18,7 +18,9 @@
 package org.voltdb.newplanner;
 
 import org.apache.calcite.sql.*;
+import org.apache.calcite.sql.parser.SqlParserPos;
 import org.apache.calcite.sql.util.SqlBasicVisitor;
+import org.voltcore.utils.Pair;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -76,16 +78,29 @@ public class ParameterizeVisitor extends SqlBasicVisitor<SqlNode> {
 
     public SqlNode visit(SqlCall call) {
         List<SqlNode> operandList = call.getOperandList();
+        List<Pair<Integer, SqlNode>> operandPairs = new ArrayList<>();
         for (int i = 0; i < operandList.size(); i++) {
             SqlNode operand = operandList.get(i);
             if (operand == null) {
-                break;
+                continue;
             }
+            operandPairs.add(new Pair<>(i, operand));
+        }
+
+        operandPairs.sort((lhs, rhs) -> {
+            SqlParserPos lPos = lhs.getSecond().getParserPosition();
+            SqlParserPos rPos = rhs.getSecond().getParserPosition();
+            return lPos.startsBefore(rPos) ? -1 : 1;
+        });
+
+        for(Pair<Integer, SqlNode> operandPair : operandPairs){
+            SqlNode operand = operandPair.getSecond();
             SqlNode visitResult = operand.accept(this);
             if (operand instanceof SqlLiteral || operand instanceof SqlDynamicParam) {
-                call.setOperand(i, visitResult);
+                call.setOperand(operandPair.getFirst(), visitResult);
             }
         }
+
         return null;
     }
 }

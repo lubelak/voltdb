@@ -1211,6 +1211,9 @@
         <exec executable="patch" dir="${build.calcite.dir}" failonerror="true" input="${vendor.tar.dir}/0001-add-setOperand-to-SqlOrderBy.patch">
             <arg value="-p1"/>
         </exec>
+        <exec executable="patch" dir="${build.calcite.dir}" failonerror="true" input="${vendor.tar.dir}/0002-make-SqlParserPos-startsBefore-public.patch">
+            <arg value="-p1"/>
+        </exec>
         <echo message="Untarred and patched Calcite. Prepare to build." />
         <exec executable="mvn" dir="${build.calcite.dir}" failonerror="true">
             <arg value="install"/>

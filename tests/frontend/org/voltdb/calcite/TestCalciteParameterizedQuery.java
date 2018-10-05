@@ -23,10 +23,12 @@
 
 package org.voltdb.calcite;
 
+import org.apache.calcite.sql.SqlLiteral;
 import org.apache.calcite.sql.SqlNode;
 import org.apache.calcite.sql.parser.SqlParseException;
 import org.apache.calcite.sql.parser.SqlParser;
 import org.apache.calcite.util.Litmus;
+import org.apache.calcite.util.NlsString;
 import org.hsqldb_voltpatches.HSQLInterface;
 import org.junit.Before;
 import org.junit.Test;
@@ -49,6 +51,9 @@ import org.voltdb.utils.Encoder;
 import org.voltdb.utils.MiscUtils;
 
 import java.io.File;
+import java.math.BigDecimal;
+import java.util.Arrays;
+import java.util.List;
 
 import static org.junit.Assert.*;
 import static org.mockito.Mockito.mock;
@@ -98,7 +103,7 @@ public class TestCalciteParameterizedQuery {
 
     @Test
     public void testParameterizedVisitor() throws SqlParseException {
-        String sql = "select * from T where id = 7 and name = 'aaa' and cnt = 566 LIMIT 2 OFFSET 3";
+        String sql = "select * from T where id = 7 and name = 'Chao' and cnt = 566 LIMIT 2 OFFSET 3";
         SqlParser parser = ParserFactory.create(sql);
         SqlNode sqlNode = parser.parseStmt();
         ParameterizeVisitor visitor = new ParameterizeVisitor();
@@ -106,7 +111,43 @@ public class TestCalciteParameterizedQuery {
 
         sql = "select * from T where id = ? and name = ? and cnt = ? LIMIT ? OFFSET ?";
         parser = ParserFactory.create(sql);
-        assertTrue(SqlNode.equalDeep(parser.parseStmt(), sqlNode, Litmus.THROW));
+
+        SqlNode sqlkkkk = parser.parseStmt();
+        assertTrue(SqlNode.equalDeep(sqlkkkk, sqlNode, Litmus.THROW));
+
+        String[] queries = {"select * from T where id = 7 and name = 'Chao' and cnt = 566 LIMIT 2 OFFSET 3",
+                "select * from T where id = 7 and cnt < 566 and name = 'Chao'",
+                "INSERT INTO T VALUES (7, 'Chao', 566)"
+        };
+
+        String[] parameterizedQueries = {"select * from T where id = ? and name = ? and cnt = ? LIMIT ? OFFSET ?",
+                "select * from T where id = ? and cnt < ? and name = ?",
+                "INSERT INTO T VALUES (?, ?, ?)"
+        };
+
+        List<Object>[] values= new List[]{Arrays.asList(BigDecimal.valueOf(7), new NlsString("Chao", null, null), BigDecimal.valueOf(566), BigDecimal.valueOf(2), BigDecimal.valueOf(3)),
+                Arrays.asList(BigDecimal.valueOf(7), BigDecimal.valueOf(566), new NlsString("Chao", null, null)),
+                Arrays.asList(BigDecimal.valueOf(7), new NlsString("Chao", null, null), BigDecimal.valueOf(566))};
+
+        for(int i=0; i<queries.length; i++){
+            SqlParser actualParser = ParserFactory.create(queries[i]);
+            SqlNode actualSqlNode = actualParser.parseStmt();
+            ParameterizeVisitor actualVisitor = new ParameterizeVisitor();
+            actualSqlNode.accept(actualVisitor);
+
+            SqlParser expectedParser = ParserFactory.create(parameterizedQueries[i]);
+            SqlNode expectedSqlNode = expectedParser.parseStmt();
+            assertTrue(SqlNode.equalDeep(actualSqlNode, expectedSqlNode, Litmus.THROW));
+
+            assertValuesEqual(values[i], actualVisitor.getSqlLiteralList());
+        }
+    }
+
+    private void assertValuesEqual(List<Object> expectedValues, List<SqlLiteral> actualValues) {
+        assertEquals(expectedValues.size(), actualValues.size());
+        for (int i=0; i<expectedValues.size(); i++){
+            assertEquals(expectedValues.get(i), actualValues.get(i).getValue());
+        }
     }
 
     @Test

@@ -1,0 +1,25 @@
+From 18c34413d9df250c08e3b33ddc66e0f583d4c5ab Mon Sep 17 00:00:00 2001
+From: Chao Zhou <czhou@voltdb.com>
+Date: Fri, 5 Oct 2018 14:39:35 -0400
+Subject: [PATCH 2/2] make SqlParserPos startsBefore public
+
+---
+ core/src/main/java/org/apache/calcite/sql/parser/SqlParserPos.java | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/core/src/main/java/org/apache/calcite/sql/parser/SqlParserPos.java b/core/src/main/java/org/apache/calcite/sql/parser/SqlParserPos.java
+index b744e6475..69079486f 100644
+--- a/core/src/main/java/org/apache/calcite/sql/parser/SqlParserPos.java
++++ b/core/src/main/java/org/apache/calcite/sql/parser/SqlParserPos.java
+@@ -276,7 +276,7 @@ public boolean overlaps(SqlParserPos pos) {
+         || pos.startsBefore(this) && pos.endsAfter(this);
+   }
+ 
+-  private boolean startsBefore(SqlParserPos pos) {
++  public boolean startsBefore(SqlParserPos pos) {
+     return lineNumber < pos.lineNumber
+         || lineNumber == pos.lineNumber
+         && columnNumber <= pos.columnNumber;
+-- 
+2.15.2 (Apple Git-101.1)
+
