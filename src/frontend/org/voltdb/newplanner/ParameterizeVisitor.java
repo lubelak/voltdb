@@ -83,9 +83,9 @@ public class ParameterizeVisitor extends SqlBasicVisitor<SqlNode> {
         for (Pair<Integer, SqlNode> operandPair : operandPairs) {
             SqlNode operand = operandPair.getSecond();
             SqlNode visitResult = operand.accept(this);
-            /* update the operand:
+            /* update the operands:
              * 1. For SqlLiteral, we replace it with a SqlDynamicParam.
-             * 2. For SqlDynamicParam, we replace it with a SqlDynamicParam with updated index.
+             * 2. For SqlDynamicParam, we replace it with a new SqlDynamicParam with updated index.
              */
             if (operand instanceof SqlLiteral || operand instanceof SqlDynamicParam) {
                 call.setOperand(operandPair.getFirst(), visitResult);
@@ -121,9 +121,9 @@ public class ParameterizeVisitor extends SqlBasicVisitor<SqlNode> {
         for (Pair<Integer, SqlNode> operandPair : operandPairs) {
             SqlNode operand = operandPair.getSecond();
             SqlNode visitResult = operand.accept(this);
-            /* update the operand:
+            /* update the operands:
              * 1. For SqlLiteral, we replace it with a SqlDynamicParam.
-             * 2. For SqlDynamicParam, we replace it with a SqlDynamicParam with updated index.
+             * 2. For SqlDynamicParam, we replace it with a new SqlDynamicParam with updated index.
              */
             if (operand instanceof SqlLiteral || operand instanceof SqlDynamicParam) {
                 nodeList.set(operandPair.getFirst(), visitResult);
