@@ -105,21 +105,25 @@ public class TestCalciteParameterizedQuery {
                 "select * from T where id = 7 and name = 'Chao' and cnt = 566 LIMIT 2 OFFSET 3",
                 "select * from T where id = 7 and cnt < 566 and name = 'Chao'",
                 "INSERT INTO T VALUES (7, 'Chao', 566)",
-                "SELECT * FROM T WHERE cnt IN (1, 3, 5)"
+                "SELECT * FROM T WHERE cnt IN (1, 3, 5)",
+                "select * from T where id = 7 and cnt < ? and name = 'Chao'"
         };
 
         String[] parameterizedQueries = {
                 "select * from T where id = ? and name = ? and cnt = ? LIMIT ? OFFSET ?",
                 "select * from T where id = ? and cnt < ? and name = ?",
                 "INSERT INTO T VALUES (?, ?, ?)",
-                "SELECT * FROM T WHERE cnt IN (?, ?, ?)"
+                "SELECT * FROM T WHERE cnt IN (?, ?, ?)",
+                "select * from T where id = ? and cnt < ? and name = ?"
         };
 
+        // expected parameter values after parameterizing the original SQL statement.
         List<Object>[] values = new List[]{
                 Arrays.asList(BigDecimal.valueOf(7), new NlsString("Chao", null, null), BigDecimal.valueOf(566), BigDecimal.valueOf(2), BigDecimal.valueOf(3)),
                 Arrays.asList(BigDecimal.valueOf(7), BigDecimal.valueOf(566), new NlsString("Chao", null, null)),
                 Arrays.asList(BigDecimal.valueOf(7), new NlsString("Chao", null, null), BigDecimal.valueOf(566)),
-                Arrays.asList(BigDecimal.valueOf(1), BigDecimal.valueOf(3), BigDecimal.valueOf(5))
+                Arrays.asList(BigDecimal.valueOf(1), BigDecimal.valueOf(3), BigDecimal.valueOf(5)),
+                Arrays.asList(BigDecimal.valueOf(7), new NlsString("Chao", null, null))
         };
 
         for (int i = 0; i < queries.length; i++) {
@@ -130,8 +134,10 @@ public class TestCalciteParameterizedQuery {
 
             SqlParser expectedParser = ParserFactory.create(parameterizedQueries[i]);
             SqlNode expectedSqlNode = expectedParser.parseStmt();
+            // compare parameterized SqlNode to expected SqlNode to see if they have the same structure
             assertTrue(SqlNode.equalDeep(actualSqlNode, expectedSqlNode, Litmus.THROW));
 
+            // check if the parameter values is extracted correctly.
             assertValuesEqual(values[i], actualVisitor.getSqlLiteralList());
         }
     }

@@ -33,23 +33,28 @@ import java.util.List;
  * @since 8.4
  */
 public class ParameterizeVisitor extends SqlBasicVisitor<SqlNode> {
-    private final List<SqlLiteral> sqlLiteralList = new ArrayList<>();
-    private int dynamicParamIndex = 0;
+    private final List<SqlLiteral> m_sqlLiteralList = new ArrayList<>();
+    private int m_dynamicParamIndex = 0;
 
+    /**
+     * Get the List of parameter values.
+     *
+     * @return the List of parameter values.
+     */
     public List<SqlLiteral> getSqlLiteralList() {
-        return sqlLiteralList;
+        return m_sqlLiteralList;
     }
 
     @Override
     public SqlNode visit(SqlLiteral literal) {
-        sqlLiteralList.add(literal);
+        m_sqlLiteralList.add(literal);
 
-        return new SqlDynamicParam(dynamicParamIndex++, literal.getParserPosition());
+        return new SqlDynamicParam(m_dynamicParamIndex++, literal.getParserPosition());
     }
 
     @Override
     public SqlNode visit(SqlDynamicParam param) {
-        return new SqlDynamicParam(dynamicParamIndex++, param.getParserPosition());
+        return new SqlDynamicParam(m_dynamicParamIndex++, param.getParserPosition());
     }
 
     @Override
@@ -67,17 +72,21 @@ public class ParameterizeVisitor extends SqlBasicVisitor<SqlNode> {
         }
 
         // sort the operands based on their position. We will ignore the equal case
-        // because the operands for the same parent node won't overlap.
+        // because the operands of the same parent node won't overlap.
         operandPairs.sort((lhs, rhs) -> {
             SqlParserPos lPos = lhs.getSecond().getParserPosition();
             SqlParserPos rPos = rhs.getSecond().getParserPosition();
             return lPos.startsBefore(rPos) ? -1 : 1;
         });
 
-        // visitor the operands order by their position
+        // visit the operands order by their position
         for (Pair<Integer, SqlNode> operandPair : operandPairs) {
             SqlNode operand = operandPair.getSecond();
             SqlNode visitResult = operand.accept(this);
+            /* update the operand:
+             * 1. For SqlLiteral, we replace it with a SqlDynamicParam.
+             * 2. For SqlDynamicParam, we replace it with a SqlDynamicParam with updated index.
+             */
             if (operand instanceof SqlLiteral || operand instanceof SqlDynamicParam) {
                 call.setOperand(operandPair.getFirst(), visitResult);
             }
@@ -101,17 +110,21 @@ public class ParameterizeVisitor extends SqlBasicVisitor<SqlNode> {
         }
 
         // sort the child nodes based on their position. We will ignore the equal case
-        // because the operands for the same parent node won't overlap.
+        // because the operands of the same parent node won't overlap.
         operandPairs.sort((lhs, rhs) -> {
             SqlParserPos lPos = lhs.getSecond().getParserPosition();
             SqlParserPos rPos = rhs.getSecond().getParserPosition();
             return lPos.startsBefore(rPos) ? -1 : 1;
         });
 
-        // visitor the child nodes order by their position
+        // visit the child nodes order by their position
         for (Pair<Integer, SqlNode> operandPair : operandPairs) {
             SqlNode operand = operandPair.getSecond();
             SqlNode visitResult = operand.accept(this);
+            /* update the operand:
+             * 1. For SqlLiteral, we replace it with a SqlDynamicParam.
+             * 2. For SqlDynamicParam, we replace it with a SqlDynamicParam with updated index.
+             */
             if (operand instanceof SqlLiteral || operand instanceof SqlDynamicParam) {
                 nodeList.set(operandPair.getFirst(), visitResult);
             }
