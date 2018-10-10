@@ -196,7 +196,7 @@ public class TestCalciteParameterizedQuery {
 
         /*
         TODO: In theory, the following assert should pass, but actually it won't pass due to:
-        1. the unparse() method not allows gives you a valid sql. We can avoid this via narrow the test case.
+        1. the unparse() method not always gives you a valid sql. We can avoid this via narrow the test case.
         2. Even given by a standard&simple testcase say "select * from T where name = 'oh'" vs. "select * from T where name = ?"
         it still have differences in the final xml. Cause:
             a. The planner sometimes will infer a different datatype, for example Varchar will become String.
