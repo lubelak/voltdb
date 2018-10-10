@@ -24,7 +24,6 @@ import java.util.concurrent.ExecutionException;
 
 import org.voltcore.utils.DBBPool;
 import org.voltcore.utils.DBBPool.BBContainer;
-import org.voltdb.PartitionDRGateway.DRRecordType;
 import org.voltdb.iv2.SpScheduler.DurableUniqueIdListener;
 import org.voltdb.jni.ExecutionEngine.EventType;
 
@@ -175,8 +174,8 @@ public class PartitionDRGateway implements DurableUniqueIdListener {
     {}
     public void onSuccessfulProcedureCall(StoredProcedureInvocation spi) {}
     public void onSuccessfulMPCall(StoredProcedureInvocation spi) {}
-    public long onBinaryDR(int partitionId, long startSequenceNumber, long lastSequenceNumber,
-            long lastSpUniqueId, long lastMpUniqueId, EventType eventType, ByteBuffer buf) {
+    public long onBinaryDR(long lastCommittedSpHandle, int partitionId, long startSequenceNumber, long lastSequenceNumber,
+                           long lastSpUniqueId, long lastMpUniqueId, EventType eventType, ByteBuffer buf) {
         final BBContainer cont = DBBPool.wrapBB(buf);
         DBBPool.registerUnsafeMemory(cont.address());
         cont.discard();
@@ -193,8 +192,11 @@ public class PartitionDRGateway implements DurableUniqueIdListener {
     @Override
     public void lastUniqueIdsMadeDurable(long spUniqueId, long mpUniqueId) {}
 
+    public void advanceTruncationHandle(long truncationHandle) {}
+
     public static long pushDRBuffer(
             int partitionId,
+            long lastCommittedSpHandle,
             long startSequenceNumber,
             long lastSequenceNumber,
             long lastSpUniqueId,
@@ -205,7 +207,7 @@ public class PartitionDRGateway implements DurableUniqueIdListener {
         if (pdrg == null) {
             return -1;
         }
-        return pdrg.onBinaryDR(partitionId, startSequenceNumber, lastSequenceNumber,
+        return pdrg.onBinaryDR(lastCommittedSpHandle, partitionId, startSequenceNumber, lastSequenceNumber,
                 lastSpUniqueId, lastMpUniqueId, EventType.values()[eventType], buf);
     }
 

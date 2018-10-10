@@ -41,16 +41,8 @@ import org.voltcore.messaging.Mailbox;
 import org.voltcore.messaging.TransactionInfoBaseMessage;
 import org.voltcore.messaging.VoltMessage;
 import org.voltcore.utils.CoreUtils;
-import org.voltdb.ClientResponseImpl;
-import org.voltdb.CommandLog;
+import org.voltdb.*;
 import org.voltdb.CommandLog.DurabilityListener;
-import org.voltdb.RealVoltDB;
-import org.voltdb.SnapshotCompletionInterest;
-import org.voltdb.SnapshotCompletionMonitor;
-import org.voltdb.SystemProcedureCatalog;
-import org.voltdb.VoltDB;
-import org.voltdb.VoltDBInterface;
-import org.voltdb.VoltTable;
 import org.voltdb.client.ClientResponse;
 import org.voltdb.dtxn.TransactionState;
 import org.voltdb.exceptions.SerializableException;
@@ -312,8 +304,8 @@ public class SpScheduler extends Scheduler implements SnapshotCompletionInterest
                 m_outstandingTxns.remove(key.m_txnId);
                 // for MP write txns, we should use it's first SpHandle in the TransactionState
                 // for SP write txns, we can just use the SpHandle from the DuplicateCounterKey
-                long m_safeSpHandle = txn == null ? key.m_spHandle: txn.m_spHandle;
-                setRepairLogTruncationHandle(m_safeSpHandle, false);
+                long safeSpHandle = txn == null ? key.m_spHandle: txn.m_spHandle;
+                setRepairLogTruncationHandle(safeSpHandle, false);
             }
 
             VoltMessage resp = counter.getLastResponse();
@@ -570,7 +562,7 @@ public class SpScheduler extends Scheduler implements SnapshotCompletionInterest
             }
 
             // The leader will be responsible to replicate messages to replicas.
-            // Don't replicate reads, not matter FAST or SAFE.
+            // Don't replicate reads, no matter FAST or SAFE.
             if (m_isLeader && (!msg.isReadOnly()) && IS_KSAFE_CLUSTER ) {
                 for (long hsId : m_sendToHSIds) {
                     Iv2InitiateTaskMessage finalMsg = msg;
@@ -1705,6 +1697,12 @@ public class SpScheduler extends Scheduler implements SnapshotCompletionInterest
         //null check for unit test
         if (m_repairLog != null) {
             m_repairLog.deliver(message);
+        }
+    }
+
+    private void notifyTruncationHandleToDR(PartitionDRGateway drGateway, long truncationHandle) {
+        if (drGateway != null) {
+            drGateway.advanceTruncationHandle(truncationHandle);
         }
     }
 
