@@ -60,7 +60,7 @@ public class ParameterizeVisitor extends SqlBasicVisitor<SqlNode> {
     @Override
     public SqlNode visit(SqlCall call) {
         List<SqlNode> operandList = call.getOperandList();
-        // before be sort the operands based on position, we need a new array copy
+        // before we sort the operands based on position, we need a new array copy
         // together with the  operand's original index.
         List<Pair<Integer, SqlNode>> operandPairs = new ArrayList<>();
         for (int i = 0; i < operandList.size(); i++) {
@@ -98,7 +98,7 @@ public class ParameterizeVisitor extends SqlBasicVisitor<SqlNode> {
     @Override
     public SqlNode visit(SqlNodeList nodeList) {
         List<SqlNode> operandList = nodeList.getList();
-        // before be sort the child nodes based on position, we need a new array copy
+        // before we sort the child nodes based on position, we need a new array copy
         // together with the  child node's original index.
         List<Pair<Integer, SqlNode>> operandPairs = new ArrayList<>();
         for (int i = 0; i < operandList.size(); i++) {
